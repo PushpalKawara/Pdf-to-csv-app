@@ -4,18 +4,15 @@ import zipfile
 import tempfile
 import os
 import io
-import csv
 import camelot
 from PIL import Image
 import pytesseract
 from pdf2image import convert_from_path
 
 # ---------------- AUTH SECTION ----------------
-# Simple static credentials (change for client)
 USERNAME = "Pushpal"
 PASSWORD = "Pushpal2002"
 
-# Initialize session state
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -42,42 +39,44 @@ def extract_text_blocks(pdf_path):
         if is_page_text_based(page):
             blocks = page.get_text("blocks")
             for b in blocks:
-                results.append([page_num, "text", b[4].strip()])
+                results.append(f"[Page {page_num} - TEXT] {b[4].strip()}")
         else:
             images = convert_from_path(pdf_path, first_page=page_num, last_page=page_num)
             text = pytesseract.image_to_string(images[0])
-            results.append([page_num, "ocr_text", text.strip()])
+            results.append(f"[Page {page_num} - OCR] {text.strip()}")
     return results
 
 def extract_tables(pdf_path):
     try:
         tables = camelot.read_pdf(pdf_path, pages='all', flavor='stream')
-        return [t.df.values.tolist() for t in tables]
+        table_texts = []
+        for i, t in enumerate(tables, start=1):
+            table_texts.append(f"\n--- TABLE {i} START ---\n")
+            for row in t.df.values.tolist():
+                table_texts.append(" | ".join(row))
+            table_texts.append(f"--- TABLE {i} END ---\n")
+        return table_texts
     except:
         return []
 
-def save_to_csv(pdf_name, text_blocks, tables):
+def save_to_txt(pdf_name, text_blocks, tables):
     output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["page", "type", "content"])
+    output.write(f"### Extracted content from {pdf_name} ###\n\n")
     for tb in text_blocks:
-        writer.writerow(tb)
+        output.write(tb + "\n")
     if tables:
-        for i, table in enumerate(tables, start=1):
-            writer.writerow(["table", f"table_{i}", "---TABLE START---"])
-            for row in table:
-                writer.writerow(["", "row", ", ".join(row)])
-            writer.writerow(["", "", "---TABLE END---"])
+        for t in tables:
+            output.write(t + "\n")
     return output.getvalue()
 
 # ---------------- STREAMLIT UI ----------------
-st.set_page_config(page_title="PDF to CSV Extractor", layout="wide")
+st.set_page_config(page_title="PDF to TXT Extractor", layout="wide")
 
 if not st.session_state.authenticated:
     login()
 else:
-    st.title("📄 PDF → CSV All-Rounder Extractor")
-    st.write("Upload single/multiple PDFs, folder (as ZIP), or ZIP with PDFs. Get structured CSV with text + tables.")
+    st.title("📄 PDF → TXT All-Rounder Extractor")
+    st.write("Upload single/multiple PDFs, folder (as ZIP), or ZIP with PDFs. Get structured text with original file names.")
 
     uploaded_files = st.file_uploader("Upload PDFs/ZIP", type=["pdf", "zip"], accept_multiple_files=True)
 
@@ -92,9 +91,9 @@ else:
                     if uploaded_file.name.endswith(".pdf"):
                         text_blocks = extract_text_blocks(file_path)
                         tables = extract_tables(file_path)
-                        csv_data = save_to_csv(uploaded_file.name, text_blocks, tables)
-                        csv_filename = uploaded_file.name.replace(".pdf", ".csv")
-                        zipf.writestr(csv_filename, csv_data)
+                        txt_data = save_to_txt(uploaded_file.name, text_blocks, tables)
+                        txt_filename = uploaded_file.name.replace(".pdf", ".txt")
+                        zipf.writestr(txt_filename, txt_data)
                     elif uploaded_file.name.endswith(".zip"):
                         with zipfile.ZipFile(file_path, 'r') as inner_zip:
                             inner_zip.extractall(tmpdir)
@@ -103,9 +102,10 @@ else:
                                     pdf_path = os.path.join(tmpdir, item)
                                     text_blocks = extract_text_blocks(pdf_path)
                                     tables = extract_tables(pdf_path)
-                                    csv_data = save_to_csv(item, text_blocks, tables)
-                                    csv_filename = item.replace(".pdf", ".csv")
-                                    zipf.writestr(csv_filename, csv_data)
+                                    txt_data = save_to_txt(item, text_blocks, tables)
+                                    txt_filename = item.replace(".pdf", ".txt")
+                                    zipf.writestr(txt_filename, txt_data)
             st.success("✅ Extraction complete! Download your ZIP:")
             with open(zip_output.name, "rb") as f:
-                st.download_button("Download CSV ZIP", f, file_name="extracted_csvs.zip")
+                st.download_button("Download TXT ZIP", f, file_name="extracted_txts.zip")
+                
