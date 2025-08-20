@@ -12,8 +12,8 @@ from pdf2image import convert_from_path
 
 # ---------------- AUTH SECTION ----------------
 # Simple static credentials (change for client)
-USERNAME = "clientuser"
-PASSWORD = "clientpass"
+USERNAME = "Pushpal"
+PASSWORD = "Pushpal2002"
 
 # Initialize session state
 if "authenticated" not in st.session_state:
