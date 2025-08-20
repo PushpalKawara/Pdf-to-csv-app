@@ -4,3 +4,6 @@ camelot-py
 pytesseract
 pdf2image
 pillow
+pandas
+xlsxwriter
+
