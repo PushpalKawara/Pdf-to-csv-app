@@ -5,6 +5,7 @@ import tempfile
 import os
 import io
 import re
+import csv
 import camelot
 import pandas as pd
 from PIL import Image
@@ -35,12 +36,7 @@ def is_page_text_based(page):
     return len(text) > 0
 
 def clean_and_split(text):
-    """
-    Split text into columns based on:
-    - 2 or more spaces
-    - vertical bar |
-    - ) followed by space
-    """
+    """Split into columns based on 2+ spaces, | or ') ' """
     parts = re.split(r'\s{2,}|\||\)\s', text.strip())
     return [p.strip() for p in parts if p.strip()]
 
@@ -65,11 +61,23 @@ def extract_text_blocks(pdf_path):
 def extract_tables(pdf_path):
     try:
         tables = camelot.read_pdf(pdf_path, pages='all', flavor='stream')
-        return [t.df.values.tolist() for t in tables]
+        cleaned = []
+        for t in tables:
+            for row in t.df.values.tolist():
+                row_clean = clean_and_split(" ".join(row))
+                if row_clean:
+                    cleaned.append(row_clean)
+        return cleaned
     except:
         return []
 
 # ---------------- SAVE FUNCTIONS ----------------
+def remove_duplicates(rows):
+    """Remove duplicate rows"""
+    df = pd.DataFrame(rows)
+    df = df.drop_duplicates().reset_index(drop=True)
+    return df.values.tolist()
+
 def save_to_csv(fname, rows):
     output = io.StringIO()
     writer = csv.writer(output)
@@ -97,8 +105,8 @@ st.set_page_config(page_title="PDF Extractor", layout="wide")
 if not st.session_state.authenticated:
     login()
 else:
-    st.title("📄 Clean PDF → CSV / Excel / TXT Extractor")
-    st.write("Upload PDFs or ZIP and download clean tables (no context lines).")
+    st.title("📄 Clean PDF → CSV / Excel / TXT Extractor (No Repeats)")
+    st.write("Upload PDFs or ZIP and download clean, unique tables (no duplicates).")
 
     output_format = st.radio("Select output format:", ["CSV", "Excel", "TXT"])
     uploaded_files = st.file_uploader("Upload PDFs/ZIP", type=["pdf", "zip"], accept_multiple_files=True)
@@ -112,19 +120,18 @@ else:
                     text_rows = extract_text_blocks(pdf_path)
                     table_rows = extract_tables(pdf_path)
 
-                    # merge text + table rows
-                    all_rows = text_rows
-                    for t in table_rows:
-                        all_rows.extend([clean_and_split(" ".join(row)) for row in t])
+                    # merge + remove duplicates
+                    all_rows = text_rows + table_rows
+                    clean_rows = remove_duplicates(all_rows)
 
                     if output_format == "CSV":
-                        data = save_to_csv(fname, all_rows)
+                        data = save_to_csv(fname, clean_rows)
                         zipf.writestr(fname.replace(".pdf", ".csv"), data)
                     elif output_format == "TXT":
-                        data = save_to_txt(fname, all_rows)
+                        data = save_to_txt(fname, clean_rows)
                         zipf.writestr(fname.replace(".pdf", ".txt"), data)
                     elif output_format == "Excel":
-                        data = save_to_excel(fname, all_rows)
+                        data = save_to_excel(fname, clean_rows)
                         zipf.writestr(fname.replace(".pdf", ".xlsx"), data)
 
                 for uploaded_file in uploaded_files:
@@ -144,6 +151,5 @@ else:
             st.success("✅ Extraction complete! Download your ZIP:")
             with open(zip_output.name, "rb") as f:
                 st.download_button("Download Results", f, file_name="extracted_results.zip")
-
-
                 
+    
