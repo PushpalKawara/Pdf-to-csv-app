@@ -5,6 +5,7 @@ import tempfile
 import os
 import io
 import camelot
+import pandas as pd
 from PIL import Image
 import pytesseract
 from pdf2image import convert_from_path
@@ -59,6 +60,7 @@ def extract_tables(pdf_path):
     except:
         return []
 
+# ---------------- SAVE FUNCTIONS ----------------
 def save_to_txt(pdf_name, text_blocks, tables):
     output = io.StringIO()
     output.write(f"### Extracted content from {pdf_name} ###\n\n")
@@ -69,43 +71,75 @@ def save_to_txt(pdf_name, text_blocks, tables):
             output.write(t + "\n")
     return output.getvalue()
 
+def save_to_csv(pdf_name, text_blocks, tables):
+    import csv
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["content"])
+    for tb in text_blocks:
+        writer.writerow([tb])
+    if tables:
+        for t in tables:
+            writer.writerow([t])
+    return output.getvalue()
+
+def save_to_excel(pdf_name, text_blocks, tables):
+    df = pd.DataFrame({"content": text_blocks + tables})
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df.to_excel(writer, index=False, sheet_name="Extracted")
+    return output.getvalue()
+
 # ---------------- STREAMLIT UI ----------------
-st.set_page_config(page_title="PDF to TXT Extractor", layout="wide")
+st.set_page_config(page_title="PDF Extractor", layout="wide")
 
 if not st.session_state.authenticated:
     login()
 else:
-    st.title("📄 PDF → TXT All-Rounder Extractor")
-    st.write("Upload single/multiple PDFs, folder (as ZIP), or ZIP with PDFs. Get structured text with original file names.")
+    st.title("📄 PDF → Multi-Format Extractor")
+    st.write("Upload single/multiple PDFs, or ZIP with PDFs. Choose your output format (CSV / Excel / TXT).")
+
+    # ✅ Format selection mandatory
+    output_format = st.radio("Select output format:", ["CSV", "Excel", "TXT"])
 
     uploaded_files = st.file_uploader("Upload PDFs/ZIP", type=["pdf", "zip"], accept_multiple_files=True)
 
     if uploaded_files:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            zip_output = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-            with zipfile.ZipFile(zip_output.name, 'w') as zipf:
-                for uploaded_file in uploaded_files:
-                    file_path = os.path.join(tmpdir, uploaded_file.name)
-                    with open(file_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    if uploaded_file.name.endswith(".pdf"):
-                        text_blocks = extract_text_blocks(file_path)
-                        tables = extract_tables(file_path)
-                        txt_data = save_to_txt(uploaded_file.name, text_blocks, tables)
-                        txt_filename = uploaded_file.name.replace(".pdf", ".txt")
-                        zipf.writestr(txt_filename, txt_data)
-                    elif uploaded_file.name.endswith(".zip"):
-                        with zipfile.ZipFile(file_path, 'r') as inner_zip:
-                            inner_zip.extractall(tmpdir)
-                            for item in os.listdir(tmpdir):
-                                if item.endswith(".pdf"):
-                                    pdf_path = os.path.join(tmpdir, item)
-                                    text_blocks = extract_text_blocks(pdf_path)
-                                    tables = extract_tables(pdf_path)
-                                    txt_data = save_to_txt(item, text_blocks, tables)
-                                    txt_filename = item.replace(".pdf", ".txt")
-                                    zipf.writestr(txt_filename, txt_data)
-            st.success("✅ Extraction complete! Download your ZIP:")
-            with open(zip_output.name, "rb") as f:
-                st.download_button("Download TXT ZIP", f, file_name="extracted_txts.zip")
-                
+        if not output_format:
+            st.error("⚠️ Please select an output format before proceeding.")
+        else:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                zip_output = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+                with zipfile.ZipFile(zip_output.name, 'w') as zipf:
+                    for uploaded_file in uploaded_files:
+                        file_path = os.path.join(tmpdir, uploaded_file.name)
+                        with open(file_path, "wb") as f:
+                            f.write(uploaded_file.getbuffer())
+
+                        def process_pdf(pdf_path, fname):
+                            text_blocks = extract_text_blocks(pdf_path)
+                            tables = extract_tables(pdf_path)
+
+                            if output_format == "TXT":
+                                data = save_to_txt(fname, text_blocks, tables)
+                                zipf.writestr(fname.replace(".pdf", ".txt"), data)
+                            elif output_format == "CSV":
+                                data = save_to_csv(fname, text_blocks, tables)
+                                zipf.writestr(fname.replace(".pdf", ".csv"), data)
+                            elif output_format == "Excel":
+                                data = save_to_excel(fname, text_blocks, tables)
+                                zipf.writestr(fname.replace(".pdf", ".xlsx"), data)
+
+                        if uploaded_file.name.endswith(".pdf"):
+                            process_pdf(file_path, uploaded_file.name)
+                        elif uploaded_file.name.endswith(".zip"):
+                            with zipfile.ZipFile(file_path, 'r') as inner_zip:
+                                inner_zip.extractall(tmpdir)
+                                for item in os.listdir(tmpdir):
+                                    if item.endswith(".pdf"):
+                                        process_pdf(os.path.join(tmpdir, item), item)
+
+                st.success("✅ Extraction complete! Download your ZIP:")
+                with open(zip_output.name, "rb") as f:
+                    st.download_button("Download Results", f, file_name="extracted_results.zip")
+                    
