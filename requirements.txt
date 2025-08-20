@@ -1,0 +1,6 @@
+streamlit
+PyMuPDF
+camelot-py
+pytesseract
+pdf2image
+pillow
