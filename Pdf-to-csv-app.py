@@ -40,23 +40,19 @@ def extract_text_blocks(pdf_path):
         if is_page_text_based(page):
             blocks = page.get_text("blocks")
             for b in blocks:
-                results.append(f"[Page {page_num} - TEXT] {b[4].strip()}")
+                # ❌ No extra "[Page ...]" text
+                results.append(b[4].strip())
         else:
             images = convert_from_path(pdf_path, first_page=page_num, last_page=page_num)
             text = pytesseract.image_to_string(images[0])
-            results.append(f"[Page {page_num} - OCR] {text.strip()}")
+            results.append(text.strip())
     return results
 
 def extract_tables(pdf_path):
     try:
         tables = camelot.read_pdf(pdf_path, pages='all', flavor='stream')
-        table_texts = []
-        for i, t in enumerate(tables, start=1):
-            table_texts.append(f"\n--- TABLE {i} START ---\n")
-            for row in t.df.values.tolist():
-                table_texts.append(" | ".join(row))
-            table_texts.append(f"--- TABLE {i} END ---\n")
-        return table_texts
+        dfs = [t.df for t in tables]  # ✅ pure DataFrame return
+        return dfs
     except:
         return []
 
@@ -66,28 +62,29 @@ def save_to_txt(pdf_name, text_blocks, tables):
     output.write(f"### Extracted content from {pdf_name} ###\n\n")
     for tb in text_blocks:
         output.write(tb + "\n")
-    if tables:
-        for t in tables:
-            output.write(t + "\n")
+    for df in tables:
+        output.write(df.to_string(index=False) + "\n\n")
     return output.getvalue()
 
 def save_to_csv(pdf_name, text_blocks, tables):
-    import csv
     output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["content"])
-    for tb in text_blocks:
-        writer.writerow([tb])
-    if tables:
-        for t in tables:
-            writer.writerow([t])
+    # ✅ Tables ko CSV format me properly likhenge
+    if text_blocks:
+        pd.DataFrame({"Text": text_blocks}).to_csv(output, index=False)
+    for i, df in enumerate(tables, start=1):
+        output.write(f"\n# Table {i}\n")
+        df.to_csv(output, index=False)
     return output.getvalue()
 
 def save_to_excel(pdf_name, text_blocks, tables):
-    df = pd.DataFrame({"content": text_blocks + tables})
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df.to_excel(writer, index=False, sheet_name="Extracted")
+        # ✅ Text ek sheet me
+        if text_blocks:
+            pd.DataFrame({"Text": text_blocks}).to_excel(writer, index=False, sheet_name="Extracted_Text")
+        # ✅ Har table alag sheet me proper columns
+        for i, df in enumerate(tables, start=1):
+            df.to_excel(writer, index=False, sheet_name=f"Table_{i}")
     return output.getvalue()
 
 # ---------------- STREAMLIT UI ----------------
@@ -99,47 +96,42 @@ else:
     st.title("📄 PDF → Multi-Format Extractor")
     st.write("Upload single/multiple PDFs, or ZIP with PDFs. Choose your output format (CSV / Excel / TXT).")
 
-    # ✅ Format selection mandatory
     output_format = st.radio("Select output format:", ["CSV", "Excel", "TXT"])
-
     uploaded_files = st.file_uploader("Upload PDFs/ZIP", type=["pdf", "zip"], accept_multiple_files=True)
 
     if uploaded_files:
-        if not output_format:
-            st.error("⚠️ Please select an output format before proceeding.")
-        else:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                zip_output = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-                with zipfile.ZipFile(zip_output.name, 'w') as zipf:
-                    for uploaded_file in uploaded_files:
-                        file_path = os.path.join(tmpdir, uploaded_file.name)
-                        with open(file_path, "wb") as f:
-                            f.write(uploaded_file.getbuffer())
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zip_output = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+            with zipfile.ZipFile(zip_output.name, 'w') as zipf:
+                for uploaded_file in uploaded_files:
+                    file_path = os.path.join(tmpdir, uploaded_file.name)
+                    with open(file_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
 
-                        def process_pdf(pdf_path, fname):
-                            text_blocks = extract_text_blocks(pdf_path)
-                            tables = extract_tables(pdf_path)
+                    def process_pdf(pdf_path, fname):
+                        text_blocks = extract_text_blocks(pdf_path)
+                        tables = extract_tables(pdf_path)
 
-                            if output_format == "TXT":
-                                data = save_to_txt(fname, text_blocks, tables)
-                                zipf.writestr(fname.replace(".pdf", ".txt"), data)
-                            elif output_format == "CSV":
-                                data = save_to_csv(fname, text_blocks, tables)
-                                zipf.writestr(fname.replace(".pdf", ".csv"), data)
-                            elif output_format == "Excel":
-                                data = save_to_excel(fname, text_blocks, tables)
-                                zipf.writestr(fname.replace(".pdf", ".xlsx"), data)
+                        if output_format == "TXT":
+                            data = save_to_txt(fname, text_blocks, tables)
+                            zipf.writestr(fname.replace(".pdf", ".txt"), data)
+                        elif output_format == "CSV":
+                            data = save_to_csv(fname, text_blocks, tables)
+                            zipf.writestr(fname.replace(".pdf", ".csv"), data)
+                        elif output_format == "Excel":
+                            data = save_to_excel(fname, text_blocks, tables)
+                            zipf.writestr(fname.replace(".pdf", ".xlsx"), data)
 
-                        if uploaded_file.name.endswith(".pdf"):
-                            process_pdf(file_path, uploaded_file.name)
-                        elif uploaded_file.name.endswith(".zip"):
-                            with zipfile.ZipFile(file_path, 'r') as inner_zip:
-                                inner_zip.extractall(tmpdir)
-                                for item in os.listdir(tmpdir):
-                                    if item.endswith(".pdf"):
-                                        process_pdf(os.path.join(tmpdir, item), item)
+                    if uploaded_file.name.endswith(".pdf"):
+                        process_pdf(file_path, uploaded_file.name)
+                    elif uploaded_file.name.endswith(".zip"):
+                        with zipfile.ZipFile(file_path, 'r') as inner_zip:
+                            inner_zip.extractall(tmpdir)
+                            for item in os.listdir(tmpdir):
+                                if item.endswith(".pdf"):
+                                    process_pdf(os.path.join(tmpdir, item), item)
 
-                st.success("✅ Extraction complete! Download your ZIP:")
-                with open(zip_output.name, "rb") as f:
-                    st.download_button("Download Results", f, file_name="extracted_results.zip")
-                    
+            st.success("✅ Extraction complete! Download your ZIP:")
+            with open(zip_output.name, "rb") as f:
+                st.download_button("Download Results", f, file_name="extracted_results.zip")
+                
