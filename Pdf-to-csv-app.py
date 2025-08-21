@@ -1,3 +1,5 @@
+# pdf-to-structured-excel-app.py
+
 import streamlit as st
 import fitz  # PyMuPDF
 import zipfile
@@ -5,12 +7,10 @@ import tempfile
 import os
 import io
 import re
-import csv
-import camelot
 import pandas as pd
-from PIL import Image
-import pytesseract
+import camelot
 from pdf2image import convert_from_path
+import pytesseract
 
 # ---------------- AUTH SECTION ----------------
 USERNAME = "Pushpal"
@@ -30,17 +30,22 @@ def login():
         else:
             st.error("❌ Invalid username or password")
 
-# ---------------- PDF FUNCTIONS ----------------
+# ---------------- HELPERS ----------------
 def is_page_text_based(page):
     text = page.get_text().strip()
     return len(text) > 0
 
 def clean_and_split(text):
-    """Split into columns based on 2+ spaces, | or ') ' """
+    """
+    Split text into columns based on 2+ spaces, | or ') '
+    Example: "Q1 2023   120.5   80.3" → ["Q1 2023", "120.5", "80.3"]
+    """
     parts = re.split(r'\s{2,}|\||\)\s', text.strip())
     return [p.strip() for p in parts if p.strip()]
 
+# ---------------- EXTRACTORS ----------------
 def extract_text_blocks(pdf_path):
+    """Extracts text & OCR from PDF pages"""
     doc = fitz.open(pdf_path)
     results = []
     for page_num, page in enumerate(doc, start=1):
@@ -59,6 +64,7 @@ def extract_text_blocks(pdf_path):
     return results
 
 def extract_tables(pdf_path):
+    """Extract structured tables using Camelot"""
     try:
         tables = camelot.read_pdf(pdf_path, pages='all', flavor='stream')
         cleaned = []
@@ -78,37 +84,24 @@ def remove_duplicates(rows):
     df = df.drop_duplicates().reset_index(drop=True)
     return df.values.tolist()
 
-def save_to_csv(fname, rows):
-    output = io.StringIO()
-    writer = csv.writer(output)
-    for row in rows:
-        writer.writerow(row)
-    return output.getvalue()
-
-def save_to_txt(fname, rows):
-    output = io.StringIO()
-    for row in rows:
-        output.write(" | ".join(row) + "\n")
-    return output.getvalue()
-
-def save_to_excel(fname, rows):
+def save_to_excel(rows, fname):
+    """Save cleaned rows to Excel"""
     df = pd.DataFrame(rows)
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df.to_excel(writer, index=False, header=False, sheet_name="Sheet1")
+        df.to_excel(writer, index=False, header=False, sheet_name="ExtractedData")
     output.seek(0)
     return output.getvalue()
 
-# ---------------- STREAMLIT UI ----------------
-st.set_page_config(page_title="PDF Extractor", layout="wide")
+# ---------------- STREAMLIT APP ----------------
+st.set_page_config(page_title="PDF → Structured Excel Extractor", layout="wide")
 
 if not st.session_state.authenticated:
     login()
 else:
-    st.title("📄 Clean PDF → CSV / Excel / TXT Extractor (No Repeats)")
-    st.write("Upload PDFs or ZIP and download clean, unique tables (no duplicates).")
+    st.title("📄 PDF → Structured Excel Extractor")
+    st.write("Upload multiple PDFs or ZIP and download clean Excel (structured tables, no duplicates).")
 
-    output_format = st.radio("Select output format:", ["CSV", "Excel", "TXT"])
     uploaded_files = st.file_uploader("Upload PDFs/ZIP", type=["pdf", "zip"], accept_multiple_files=True)
 
     if uploaded_files:
@@ -120,18 +113,12 @@ else:
                     text_rows = extract_text_blocks(pdf_path)
                     table_rows = extract_tables(pdf_path)
 
-                    # merge + remove duplicates
+                    # Merge + clean
                     all_rows = text_rows + table_rows
                     clean_rows = remove_duplicates(all_rows)
 
-                    if output_format == "CSV":
-                        data = save_to_csv(fname, clean_rows)
-                        zipf.writestr(fname.replace(".pdf", ".csv"), data)
-                    elif output_format == "TXT":
-                        data = save_to_txt(fname, clean_rows)
-                        zipf.writestr(fname.replace(".pdf", ".txt"), data)
-                    elif output_format == "Excel":
-                        data = save_to_excel(fname, clean_rows)
+                    if clean_rows:
+                        data = save_to_excel(clean_rows, fname)
                         zipf.writestr(fname.replace(".pdf", ".xlsx"), data)
 
                 for uploaded_file in uploaded_files:
@@ -150,6 +137,6 @@ else:
 
             st.success("✅ Extraction complete! Download your ZIP:")
             with open(zip_output.name, "rb") as f:
-                st.download_button("Download Results", f, file_name="extracted_results.zip")
+                st.download_button("📥 Download Results", f, file_name="extracted_excel_results.zip")
                 
     
