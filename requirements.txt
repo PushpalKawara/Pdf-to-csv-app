@@ -1,9 +1,9 @@
 streamlit
-PyMuPDF
-camelot-py
-pytesseract
-pdf2image
-pillow
+pymupdf
 pandas
+camelot-py[cv]
+pdf2image
+pytesseract
+Pillow
 xlsxwriter
 
